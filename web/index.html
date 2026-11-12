@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STM en vivo</title>
+<style>
+  :root {
+    --bg: #F2F4F6; --panel: #FFFFFF; --ink: #16212C; --muted: #5A6776; --rule: #D5DCE3;
+    --accent: #0B7F73; --error: #B3261E;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0F161D; --panel: #17212B; --ink: #E5ECF2; --muted: #98A6B5; --rule: #2B3A49;
+            --accent: #2CC2B0; --error: #F2B8B5; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 48px; display: grid; gap: 20px; }
+  h1 { margin: 0; font-size: 32px; line-height: 1.15; }
+  .sub { margin: 4px 0 0; color: var(--muted); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+  .card, .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 18px 20px; }
+  .label { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .valor { margin: 6px 0 0; font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .detalle { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
+  .panel h2 { margin: 0 0 16px; font-size: 18px; }
+
+  .barras { display: grid; grid-template-columns: repeat(24, 1fr); gap: 4px; align-items: end;
+            height: 320px; border-bottom: 1px solid var(--rule); }
+  .col { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 0; }
+  .num { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-bottom: 4px; white-space: nowrap; }
+  .barra { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; transition: height .4s; }
+  .horas { display: grid; grid-template-columns: repeat(24, 1fr); gap: 4px; margin-top: 6px; }
+  .horas span { text-align: center; font-size: 11px; color: var(--muted); }
+  @media (max-width: 700px) { .num { display: none; } .horas span:nth-child(odd) { visibility: hidden; } }
+
+  .estado { margin: 0; font-size: 14px; color: var(--muted); }
+  .estado.error { color: var(--error); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1> Boletos de STM </h1>
+  </header>
+
+  <section class="cards">
+    <div class="card">
+      <p class="label">Pasajeros</p>
+      <p class="valor" id="total">—</p>
+    </div>
+    <div class="card">
+      <p class="label">Métricas calculadas</p>
+      <p class="valor" id="actualizado">—</p>
+      <p class="detalle" id="hace"></p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Boletos por hora del día</h2>
+    <div class="barras" id="barras"></div>
+    <div class="horas" id="horas"></div>
+  </section>
+
+  <p class="estado" id="estado">Cargando datos…</p>
+</main>
+
+<script>
+  const CADA = 5;
+  const miles = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  let ultimaFecha = null, faltan = CADA;
+
+  const barras = document.getElementById("barras");
+  const horas = document.getElementById("horas");
+  for (let h = 0; h < 24; h++) {
+    barras.insertAdjacentHTML("beforeend",
+      `<div class="col"><span class="num" id="n${h}"></span><div class="barra" id="b${h}" style="height:0"></div></div>`);
+    horas.insertAdjacentHTML("beforeend", `<span>${String(h).padStart(2, "0")}</span>`);
+  }
+
+  function dibujar(porHora) {
+    const valores = Array(24).fill(0);
+    porHora.forEach(f => { valores[f.hora] = f.cantidad_boletos; });
+    const maximo = Math.max(1, ...valores);
+    valores.forEach((v, h) => {
+      const barra = document.getElementById("b" + h);
+      barra.style.height = (v / maximo * 88) + "%";
+      barra.title = String(h).padStart(2, "0") + " h: " + miles(v) + " boletos";
+      document.getElementById("n" + h).textContent = v ? miles(v) : "";
+    });
+  }
+
+  async function leer() {
+    const estado = document.getElementById("estado");
+    try {
+      const r = await fetch("datos.json?t=" + Date.now(), { cache: "no-store" });
+      if (!r.ok) throw new Error("respuesta " + r.status);
+      const d = await r.json();
+      document.getElementById("total").textContent = miles(d.total_pasajeros);
+      document.getElementById("actualizado").textContent = d.actualizado.slice(11, 16);
+      ultimaFecha = new Date(d.actualizado.replace(" ", "T"));
+      dibujar(d.por_hora);
+      estado.classList.remove("error");
+    } catch (e) {
+      estado.classList.add("error");
+      estado.textContent = "No se pudo leer datos.json (" + e.message + "). ¿Está corriendo exportar.py?";
+    }
+    faltan = CADA;
+  }
+
+  function reloj() {
+    if (ultimaFecha) {
+      const seg = Math.max(0, Math.round((Date.now() - ultimaFecha) / 1000));
+      document.getElementById("hace").textContent = "hace " + seg + " s";
+    }
+    const estado = document.getElementById("estado");
+    if (!estado.classList.contains("error")) estado.textContent = "Próxima lectura en " + faltan + " s";
+    faltan = Math.max(0, faltan - 1);
+  }
+
+  leer();
+  setInterval(leer, CADA * 1000);
+  setInterval(reloj, 1000);
+</script>
+</body>
+</html>
