@@ -1,42 +1,52 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json
-from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql.functions import from_json, col
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
+import valkey
 
-# La sesion de Spark
-spark = (SparkSession.builder
-         .appName("boletos-en-vivo")
-         .master("yarn")
-         .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.2")
-         .config("spark.sql.shuffle.partitions", "4")
-         .getOrCreate())
+# Inicia sesion de spark
+spark = SparkSession.builder.appName("STM Streaming").getOrCreate()
 
-# Leer el topic de kafka
-boletos_kafka = (spark.readStream
-                 .format("kafka")
-                 .option("kafka.bootstrap.servers", "localhost:9092")
-                 .option("subscribe", "boletos")
-                 .load())
+# Leer eventos desde Kafka
+df = spark.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("subscribe", "boletos") \
+    .option("startingOffsets", "earliest") \
+    .load()
 
-# Pasar de bytes a las columnas de CSV
-columnas = ["id_viaje", "con_tarjeta", "fecha_evento", "tipo_viaje", "descripcion_tipo_viaje",
-            "grupo_usuario", "descripcion_grupo_usuario", "grupo_usuario_especifico",
-            "descripcion_grupo_usuario_espe", "ordinal_de_tramo", "cantidad_pasajeros",
-            "codigo_parada_origen", "cod_empresa", "descrip_empresa", "linea_codigo",
-            "dsc_linea", "sevar_codigo"]
-esquema = StructType([StructField(c, StringType()) for c in columnas]) # Crea cada campo de una fila tomando el array columnas
+# Convierte bytes a string
+data = df.selectExpr("CAST(value AS STRING)")
 
-boletos = (boletos_kafka
-           .select(from_json(col("value").cast("string"), esquema).alias("b"),
-                   col("timestamp").alias("enviado"))
-           .select("b.*", "enviado"))
+# Define el esquema para el from_json
+schema = StructType([StructField("fecha_evento", TimestampType()), StructField("dsc_linea", StringType()), StructField("cantidad_pasajeros", StringType())])
 
-# Guarda en HDFS como Parquet
-archivo = (boletos.writeStream
-           .format("parquet")
-           .option("path", "/user/gonzalo/stm/boletos_vivo")
-           .option("checkpointLocation", "/user/gonzalo/checkpoints/archivo")
-           .trigger(processingTime="5 seconds")
-           .start())
+# Pasa el string a JSON
+tickets = data.select(from_json(col("value"), schema).alias("ticket")).select("ticket.*")
 
-# Queda corriendo
-archivo.awaitTermination()
+# Para que se pueda usar en las querys SQL
+tickets.createOrReplaceTempView("tickets")
+
+querys = spark.sql("""SELECT window(fecha_evento, '1 hour') AS interval, dsc_linea AS line, SUM(CAST(cantidad_pasajeros AS INTEGER)) AS passengers FROM tickets
+        GROUP BY window(fecha_evento, '1 hour'), dsc_linea""")
+
+client = valkey.Valkey(host="localhost", port=6379, decode_responses=True)
+
+def push_valkey(batch_df, batch_id):
+    print("Recibido", batch_id)
+    
+    rows = batch_df.collect()
+
+    for row in rows:
+        # Por cada linea separa los datos
+        interval = row["interval"].start
+        line = row["line"]
+        passengers = row["passengers"]
+
+        key = f"stm:{interval}:{line}"
+
+        # Envia a valkey el intervalo y linea como key, pasajeros como value
+        client.set(key, passengers)
+
+push = querys.writeStream.outputMode("update").foreachBatch(push_valkey).start()
+
+push.awaitTermination()
