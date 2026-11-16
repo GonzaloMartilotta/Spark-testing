@@ -1,0 +1,77 @@
+services:
+  kafka-1:
+    image: docker.io/apache/kafka:4.4.0
+    container_name: kafka-1
+    ports:
+      - 19092:19092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092,EXTERNAL://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+    restart: unless-stopped
+
+  kafka-2:
+    image: docker.io/apache/kafka:4.4.0
+    container_name: kafka-2
+    ports:
+      - 19093:19093
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:19093,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092,EXTERNAL://localhost:19093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+    restart: unless-stopped
+
+  kafka-3:
+    image: docker.io/apache/kafka:4.4.0
+    container_name: kafka-3
+    ports:
+      - 19094:19094
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,EXTERNAL://:19094,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092,EXTERNAL://localhost:19094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+    restart: unless-stopped
+
+  valkey:
+    image: docker.io/valkey/valkey:9.1
+    container_name: valkey
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    restart: unless-stopped
+
+  grafana:
+    image: docker.io/grafana/grafana:13.3
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_PLUGINS_PREINSTALL=redis-datasource # Variable que grafana detecta y preinstala el plugin
+      - GF_SECURITY_ADMIN_USER=gonzalo
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
+    volumes:
+      - grafana_data:/var/lib/grafana
+    secrets:
+      - grafana_admin_password
+    restart: unless-stopped
+
+volumes:
+  grafana_data:
+  valkey_data:
+
+secrets:
+  grafana_admin_password:
+    external: true

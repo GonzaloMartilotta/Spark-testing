@@ -5,11 +5,12 @@ import valkey
 
 # Inicia sesion de spark
 spark = SparkSession.builder.appName("STM Streaming").getOrCreate()
+spark.sparkContext.setLogLevel("WARN")
 
 # Leer eventos desde Kafka
 df = spark.readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("kafka.bootstrap.servers", "localhost:19092,localhost:19093,localhost:19094") \
     .option("subscribe", "boletos") \
     .option("startingOffsets", "earliest") \
     .load()
@@ -42,11 +43,24 @@ def push_valkey(batch_df, batch_id):
         line = row["line"]
         passengers = row["passengers"]
 
-        key = f"stm:{interval}:{line}"
+        hour = interval.strftime("%H")
+        day = interval.strftime("%Y-%m-%d")
 
-        # Envia a valkey el intervalo y linea como key, pasajeros como value
-        client.set(key, passengers)
+        key = f"stm:line:{line}:{day}"
 
-push = querys.writeStream.outputMode("update").foreachBatch(push_valkey).start()
+        # Guarda el total de la hora en el hash de la linea
+        client.hset(key, hour, passengers)
+
+        # Guarda las lineas en un conjunto
+        client.sadd("stm:line", line)
+
+        # Guada los dias en el conjunto
+        client.sadd("stm:day", day)
+
+        # Tiempo de expiracion de una key (1 hora)
+        client.expire(key, 3600)
+
+push = querys.writeStream.outputMode("update").foreachBatch(push_valkey) \
+    .option("checkpointLocation", "/user/gonzalo/checkpoints/stm").start()
 
 push.awaitTermination()

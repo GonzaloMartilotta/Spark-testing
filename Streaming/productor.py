@@ -11,7 +11,7 @@ file = sys.argv[1]
 speed = float(sys.argv[2]) # configurar velocidad (1 tiempo real)
 
 # Conectarse a Kafka
-kafka = KafkaProducer(bootstrap_servers="localhost:9092")
+kafka = KafkaProducer(bootstrap_servers="localhost:19092,localhost:19093,localhost:19094")
 
 real_start = None     # hora en que se envió el primer boleto
 data_start = None    # fecha_evento del primer boleto
